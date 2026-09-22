@@ -172,14 +172,14 @@ function UserAvatarPopoverContent(props: UserAvatarPopoverContentProps) {
         <button ref={setReferenceElement} className="flex items-center gap-2 rounded-sm border border-subtle p-2">
           <Avatar
             name={currentUser?.display_name}
-            src={getFileURL(currentUser?.avatar_url)}
+            src={getFileURL(currentUser?.avatar_url ?? "")}
             shape="square"
             size="sm"
             showTooltip={false}
           />
           <h6 className="text-11 font-medium text-secondary">
             {currentUser?.display_name ||
-              `${currentUser?.first_name} ${currentUser?.first_name}` ||
+              `${currentUser?.first_name} ${currentUser?.last_name}` ||
               currentUser?.email ||
               "User"}
           </h6>
