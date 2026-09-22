@@ -6,7 +6,7 @@
 
 import { Combobox } from "@headlessui/react";
 import { ChevronDownOutline, InfoOutline, SearchOutline, TickOutline } from "@makeplane/propel/icons";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePopper } from "react-popper";
 import { useOutsideClickDetector } from "@plane/hooks";
@@ -53,6 +53,44 @@ export function CustomSearchSelect(props: ICustomSearchSelectProps) {
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: placement ?? "bottom-start",
   });
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the portaled panel renders at the document's default (0,0) corner
+  // instead of anchored to the trigger button. Recover by locating the open
+  // panel mounted in document.body.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      let el: HTMLDivElement | null = null;
+      if (referenceElement?.id) {
+        el = document.querySelector<HTMLDivElement>(`ul[aria-labelledby="${referenceElement.id}"] > div`);
+      }
+      if (!el) {
+        el = document.querySelector<HTMLDivElement>('ul[data-headlessui-state="open"] > div, ul[data-open] > div');
+      }
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isOpen, popperElement, referenceElement]);
 
   const filteredOptions =
     query === "" ? options : options?.filter((option) => option.query.toLowerCase().includes(query.toLowerCase()));
@@ -171,6 +209,39 @@ export function CustomSearchSelect(props: ICustomSearchSelectProps) {
                         "max-h-36": maxHeight === "rg",
                         "max-h-28": maxHeight === "sm",
                       })}
+                      onClickCapture={(e) => {
+                        // React 19 hit-testing sometimes resolves option clicks to this
+                        // list container instead of the option elements, so the click
+                        // never reaches an option. Resolve the intended option by click
+                        // coordinates and drive onChange directly.
+                        const root = e.currentTarget as HTMLElement;
+                        const items = Array.from(root.querySelectorAll<HTMLElement>("li, [role='option']")).filter(
+                          (el) => el.getBoundingClientRect().height > 0
+                        );
+                        const option = items.find((el) => {
+                          const r = el.getBoundingClientRect();
+                          return (
+                            e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+                          );
+                        });
+                        if (!option) return;
+                        const idx = items.indexOf(option);
+                        const target = filteredOptions?.[idx];
+                        if (idx >= 0 && target && !target.disabled) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (multiple) {
+                            const current: any[] = Array.isArray(value) ? value : [];
+                            const next = current.includes(target.value)
+                              ? current.filter((v) => v !== target.value)
+                              : [...current, target.value];
+                            onChange(next as any);
+                          } else {
+                            onChange(target.value);
+                            closeDropdown();
+                          }
+                        }
+                      }}
                     >
                       {filteredOptions ? (
                         filteredOptions.length > 0 ? (

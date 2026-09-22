@@ -6,7 +6,7 @@
 
 import { Combobox } from "@headlessui/react";
 import { sortBy } from "lodash-es";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePopper } from "react-popper";
 // plane imports
 import { useOutsideClickDetector } from "@plane/hooks";
@@ -67,6 +67,27 @@ export function Dropdown(props: ISingleSelectDropdown) {
       },
     ],
   });
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  React.useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and every option click registers as an outside click. Recover by
+  // locating the mounted panel from the container DOM.
+  React.useEffect(() => {
+    if (isOpen && !popperElement && dropdownRef.current) {
+      const el = dropdownRef.current.querySelector<HTMLDivElement>("ul.fixed.z-10 > div");
+      if (el) setPopperElement(el);
+    }
+  }, [isOpen, popperElement]);
 
   // handlers
   const toggleDropdown = () => {
@@ -167,6 +188,7 @@ export function Dropdown(props: ISingleSelectDropdown) {
               renderItem={renderItem}
               loader={loader}
               handleClose={handleClose}
+              onOptionClick={(val) => onChange(val)}
             />
           </div>
         </Combobox.Options>

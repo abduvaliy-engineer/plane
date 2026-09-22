@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { usePopper } from "react-popper";
@@ -49,6 +49,12 @@ export const CalendarOptionsDropdown = observer(function CalendarOptionsDropdown
 
   const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | null>(null);
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
+  // ref on the whole Popover container so we can recover dropped refs
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  // bumped on every trigger click so the recovery effects re-run whenever
+  // the panel opens or closes (Popover manages its own `open` state, not
+  // exposed outside its render-prop, so we can't gate on `isOpen` directly)
+  const [openTick, setOpenTick] = useState(0);
 
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: "auto",
@@ -61,6 +67,39 @@ export const CalendarOptionsDropdown = observer(function CalendarOptionsDropdown
       },
     ],
   });
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (!referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [openTick, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the panel renders at the document's default (0,0) corner instead of
+  // anchored to the trigger button. Recover by locating the mounted panel
+  // (not portaled here, so it lives inside the container DOM).
+  useEffect(() => {
+    if (popperElement || !dropdownRef.current) return;
+    const container = dropdownRef.current;
+    const find = () => {
+      const el = container.querySelector<HTMLDivElement>(".fixed.z-50 > div");
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (!find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [openTick, popperElement]);
 
   const calendarLayout = issuesFilterStore.issueFilters?.displayFilters?.calendar?.layout ?? "month";
   const showWeekends = issuesFilterStore.issueFilters?.displayFilters?.calendar?.show_weekends ?? false;
@@ -97,11 +136,11 @@ export const CalendarOptionsDropdown = observer(function CalendarOptionsDropdown
   };
 
   return (
-    <Popover className="relative flex items-center">
+    <Popover ref={dropdownRef} className="relative flex items-center">
       {({ open, close: closePopover }) => (
         <>
           <Popover.Button as={React.Fragment}>
-            <button type="button" ref={setReferenceElement}>
+            <button type="button" ref={setReferenceElement} onClick={() => setOpenTick((t) => t + 1)}>
               <div
                 className={`hidden items-center gap-1.5 rounded-sm bg-layer-1 px-2.5 py-1 text-11 outline-none hover:bg-layer-1 md:flex ${
                   open ? "text-primary" : "text-secondary"
@@ -134,6 +173,26 @@ export const CalendarOptionsDropdown = observer(function CalendarOptionsDropdown
                 style={styles.popper}
                 {...attributes.popper}
                 className="absolute right-0 z-10 mt-1 min-w-[12rem] overflow-hidden rounded-sm border border-subtle bg-surface-1 p-1 shadow-raised-200"
+                onClickCapture={(e) => {
+                  // React 19 hit-testing sometimes resolves option clicks to
+                  // this panel container instead of the actual button, so the
+                  // click never reaches it. Resolve the intended button by
+                  // click coordinates and re-dispatch a real click on it
+                  // (synthetic clicks default to clientX/Y=0 so this can't
+                  // recurse into itself).
+                  const root = e.currentTarget as HTMLElement;
+                  const items = Array.from(root.querySelectorAll<HTMLElement>("button")).filter(
+                    (el) => el.getBoundingClientRect().height > 0
+                  );
+                  const option = items.find((el) => {
+                    const r = el.getBoundingClientRect();
+                    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+                  });
+                  if (!option) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  option.click();
+                }}
               >
                 <div>
                   {Object.entries(CALENDAR_LAYOUTS).map(([layout, layoutDetails]) => (

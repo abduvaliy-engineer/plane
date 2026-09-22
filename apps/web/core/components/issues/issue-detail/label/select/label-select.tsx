@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { usePopper } from "react-popper";
 import { AddOutline, LoadingOutline, SearchOutline, TickOutline } from "@makeplane/propel/icons";
@@ -44,6 +44,9 @@ export const IssueLabelSelect = observer(function IssueLabelSelect(props: IIssue
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState<boolean>(false);
+  // ref on the Combobox root so we can recover dropped refs
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
 
   const canCreateLabel =
     projectId && allowPermissions([EUserProjectRoles.ADMIN], EUserPermissionsLevel.PROJECT, workspaceSlug, projectId);
@@ -89,6 +92,27 @@ export const IssueLabelSelect = observer(function IssueLabelSelect(props: IIssue
     ],
   });
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs,
+  // the panel stays at 0x0 and every option click registers as an outside
+  // click. Recover by locating the mounted panel from the container DOM.
+  useEffect(() => {
+    if (isOpen && !popperElement && dropdownRef.current) {
+      const el = dropdownRef.current.querySelector<HTMLDivElement>("ul.fixed.z-10 > div");
+      if (el) setPopperElement(el);
+    }
+  }, [isOpen, popperElement]);
+
   const issueLabels = values ?? [];
 
   const label = <span className="text-body-xs-medium text-placeholder">{t("label.select")}</span>;
@@ -120,31 +144,64 @@ export const IssueLabelSelect = observer(function IssueLabelSelect(props: IIssue
     <>
       <Combobox
         as="div"
+        ref={dropdownRef}
         className="size-full flex-shrink-0 text-left"
         value={issueLabels}
         onChange={(value) => onSelect(value)}
         multiple
       >
-        <Combobox.Button as={Fragment}>
-          <Button
-            ref={setReferenceElement}
-            type="button"
-            variant="tertiary"
-            size="sm"
-            prependIcon={<AddOutline />}
-            onClick={() => !projectLabels && fetchLabels()}
-          >
-            {label}
-          </Button>
-        </Combobox.Button>
+        {({ open }: { open: boolean }) => {
+          if (open !== isOpen) setIsOpen(open);
+          return (
+            <>
+              <Combobox.Button as={Fragment}>
+                <Button
+                  ref={setReferenceElement}
+                  type="button"
+                  variant="tertiary"
+                  size="sm"
+                  prependIcon={<AddOutline />}
+                  onClick={() => !projectLabels && fetchLabels()}
+                >
+                  {label}
+                </Button>
+              </Combobox.Button>
 
-        <Combobox.Options as="ul" className="fixed z-10">
-          <div
-            className={`z-10 my-1 w-48 rounded-sm border border-strong bg-surface-1 py-2.5 text-11 whitespace-nowrap shadow-raised-200 focus:outline-none`}
-            ref={setPopperElement}
-            style={styles.popper}
-            {...attributes.popper}
-          >
+              <Combobox.Options as="ul" className="fixed z-10">
+                <div
+                  className={`z-10 my-1 w-48 rounded-sm border border-strong bg-surface-1 py-2.5 text-11 whitespace-nowrap shadow-raised-200 focus:outline-none`}
+                  ref={setPopperElement}
+                  style={styles.popper}
+                  {...attributes.popper}
+                  onClickCapture={(e) => {
+                    // React 19 hit-testing sometimes resolves option clicks to
+                    // this panel container instead of the option elements, so
+                    // the click never reaches an option. Resolve the intended
+                    // option by click coordinates and drive this component's
+                    // own onSelect (multi-select: toggle the hit value).
+                    const root = e.currentTarget as HTMLElement;
+                    const items = Array.from(root.querySelectorAll<HTMLElement>("li, [role='option']")).filter(
+                      (el) => el.getBoundingClientRect().height > 0
+                    );
+                    const option = items.find((el) => {
+                      const r = el.getBoundingClientRect();
+                      return (
+                        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+                      );
+                    });
+                    if (!option) return;
+                    const idx = items.indexOf(option);
+                    const target = filteredOptions?.[idx];
+                    if (idx >= 0 && target) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const next = issueLabels.includes(target.value)
+                        ? issueLabels.filter((v) => v !== target.value)
+                        : [...issueLabels, target.value];
+                      onSelect(next);
+                    }
+                  }}
+                >
             <div className="px-2">
               <div className="flex w-full items-center justify-start rounded-sm border border-subtle bg-surface-2 px-2">
                 <SearchOutline className="h-3.5 w-3.5 text-tertiary" />
@@ -217,8 +274,11 @@ export const IssueLabelSelect = observer(function IssueLabelSelect(props: IIssue
                 <p className="text-left text-secondary">{t("common.search.no_matching_results")}</p>
               )}
             </div>
-          </div>
-        </Combobox.Options>
+                </div>
+              </Combobox.Options>
+            </>
+          );
+        }}
       </Combobox>
     </>
   );

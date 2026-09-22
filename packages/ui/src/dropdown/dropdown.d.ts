@@ -89,6 +89,10 @@ export interface IDropdownOptions {
   disableSearch?: boolean;
 
   handleClose?: () => void;
+  // Called with the value of the option whose bounding box contains a
+  // click's coordinates, when React19 hit-testing resolves the click to the
+  // options container div instead of the actual option/li element.
+  onOptionClick?: (value: string) => void;
 
   keyExtractor: (option: TDropdownOption) => string;
   renderItem:

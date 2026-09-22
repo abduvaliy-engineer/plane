@@ -128,6 +128,49 @@ export const DateRangeDropdown = observer(function DateRangeDropdown(props: Prop
     ],
   });
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the panel (when portaled) renders at the document's default (0,0)
+  // corner instead of anchored to the trigger button. Recover by locating
+  // the open panel mounted in document.body, or in the dropdown container
+  // when not portaled.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      let el: HTMLDivElement | null = null;
+      if (renderInPortal) {
+        if (referenceElement?.id) {
+          el = document.querySelector<HTMLDivElement>(`ul[aria-labelledby="${referenceElement.id}"] > div`);
+        }
+        if (!el) {
+          el = document.querySelector<HTMLDivElement>('ul[data-headlessui-state="open"] > div, ul[data-open] > div');
+        }
+      } else if (dropdownRef.current) {
+        el = dropdownRef.current.querySelector<HTMLDivElement>("ul > div");
+      }
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isOpen, popperElement, referenceElement, renderInPortal]);
+
   const onOpen = () => {
     if (referenceElement) referenceElement.focus();
   };

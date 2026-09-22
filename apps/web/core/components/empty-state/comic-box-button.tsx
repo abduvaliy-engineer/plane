@@ -5,7 +5,7 @@
  */
 
 import type { Ref } from "react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { usePopper } from "react-popper";
 import { Popover } from "@headlessui/react";
 // plane imports
@@ -34,6 +34,8 @@ export function ComicBoxButton(props: Props) {
 
   const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | null>(null);
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>();
+  // ref to the Popover root, used to recover dropped popper refs on React 19
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: "right-end",
     modifiers: [
@@ -46,8 +48,40 @@ export function ComicBoxButton(props: Props) {
     ],
   });
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isHovered && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isHovered, referenceElement]);
+
+  // On React 19 the panel div's ref callback can similarly be dropped,
+  // leaving popperElement null forever: popper never runs and the panel
+  // stays at 0x0. The panel is not portaled (no createPortal call), so it
+  // remains inside this Popover's own subtree — recover it from there.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      if (!dropdownRef.current) return false;
+      const el = dropdownRef.current.querySelector<HTMLDivElement>(".fixed.z-10 > div");
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isHovered && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isHovered, popperElement]);
+
   return (
-    <Popover as="div" className="relative">
+    <Popover as="div" className="relative" ref={dropdownRef}>
       <Popover.Button as={Fragment}>
         <Button variant="primary" size="lg" ref={setReferenceElement} onClick={onClick} disabled={disabled}>
           {icon}

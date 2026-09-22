@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { useState, Fragment, useEffect } from "react";
+import { useState, Fragment, useEffect, useRef } from "react";
 import { TwitterPicker } from "react-color";
 import { Controller, useForm } from "react-hook-form";
 import { usePopper } from "react-popper";
@@ -40,6 +40,12 @@ export function LabelCreate(props: ILabelCreate) {
   const handleIsCreateToggle = () => setIsCreateToggle(!isCreateToggle);
   const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | null>(null);
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
+  // ref on the whole Popover container so we can recover dropped refs
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  // bumped on every trigger click so the recovery effects re-run whenever
+  // the panel opens or closes (Popover manages its own `open` state, not
+  // exposed outside its render-prop, so we can't gate on `isOpen` directly)
+  const [openTick, setOpenTick] = useState(0);
   // react hook form
   const {
     handleSubmit,
@@ -62,6 +68,39 @@ export function LabelCreate(props: ILabelCreate) {
       },
     ],
   });
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (!referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [openTick, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the panel renders at the document's default (0,0) corner instead of
+  // anchored to the trigger button. Recover by locating the mounted panel
+  // (not portaled here, so it lives inside the container DOM).
+  useEffect(() => {
+    if (popperElement || !dropdownRef.current) return;
+    const container = dropdownRef.current;
+    const find = () => {
+      const el = container.querySelector<HTMLDivElement>(".fixed.z-10 > div");
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (!find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [openTick, popperElement]);
 
   useEffect(() => {
     if (!isCreateToggle) return;
@@ -99,10 +138,15 @@ export function LabelCreate(props: ILabelCreate) {
               name="color"
               control={control}
               render={({ field: { value, onChange } }) => (
-                <Popover>
+                <Popover ref={dropdownRef}>
                   <>
                     <Popover.Button as={Fragment}>
-                      <button type="button" ref={setReferenceElement} className="grid place-items-center outline-none">
+                      <button
+                        type="button"
+                        ref={setReferenceElement}
+                        className="grid place-items-center outline-none"
+                        onClick={() => setOpenTick((t) => t + 1)}
+                      >
                         {value && value?.trim() !== "" && (
                           <span
                             className="h-5 w-5 rounded-sm"
@@ -119,6 +163,24 @@ export function LabelCreate(props: ILabelCreate) {
                         ref={setPopperElement}
                         style={styles.popper}
                         {...attributes.popper}
+                        onClickCapture={(e) => {
+                          // React 19 hit-testing sometimes resolves clicks on
+                          // TwitterPicker's color swatches to this outer panel
+                          // div instead of the swatch itself, so the click
+                          // never reaches react-color's own handler. Resolve
+                          // the actual element under the pointer and
+                          // re-dispatch a real click on it. Guard against
+                          // recursion: only redirect when the resolved
+                          // element differs from both the panel and the
+                          // original event target.
+                          const root = e.currentTarget as HTMLElement;
+                          if (e.target !== root) return;
+                          const real = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+                          if (!real || real === root) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          real.click();
+                        }}
                       >
                         <TwitterPicker triangle={"hide"} color={value} onChange={(value) => onChange(value.hex)} />
                       </div>

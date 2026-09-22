@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import type {
   Control,
@@ -95,6 +95,9 @@ const InviteMemberInput = observer(function InviteMemberInput(props: InviteMembe
 
   const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | null>(null);
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
+  // ref to the Listbox root, used to recover dropped popper refs on React 19
+  const listboxRef = useRef<HTMLDivElement | null>(null);
+  const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
 
   const { t } = useTranslation();
 
@@ -136,6 +139,38 @@ const InviteMemberInput = observer(function InviteMemberInput(props: InviteMembe
     ],
   });
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isRoleMenuOpen && !referenceElement && listboxRef.current) {
+      const btn = listboxRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isRoleMenuOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can similarly be dropped,
+  // leaving popperElement null forever: popper never runs and the panel
+  // stays at 0x0. The panel is not portaled (no createPortal call), so it
+  // remains inside this Listbox's own subtree — recover it from there.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      if (!listboxRef.current) return false;
+      const el = listboxRef.current.querySelector<HTMLDivElement>('[role="listbox"] > div');
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isRoleMenuOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isRoleMenuOpen, popperElement]);
+
   return (
     <div>
       <div className="group relative grid grid-cols-10 gap-4">
@@ -176,69 +211,111 @@ const InviteMemberInput = observer(function InviteMemberInput(props: InviteMembe
             control={control}
             name={`emails.${index}.role`}
             rules={{ required: true }}
-            render={({ field: { value, onChange } }) => (
-              <Listbox
-                as="div"
-                value={value}
-                onChange={(val) => {
-                  onChange(val);
-                  setValue(`emails.${index}.role_active`, true);
-                }}
-                className="w-full flex-shrink-0 text-left"
-              >
-                <Listbox.Button
-                  type="button"
-                  ref={setReferenceElement}
-                  className="flex w-full items-center justify-between gap-1 rounded-md border-[0.5px] border-strong px-2.5 py-2 text-13"
+            render={({ field: { value, onChange } }) => {
+              const roleOptions = Object.entries(ROLE_DETAILS);
+              return (
+                <Listbox
+                  as="div"
+                  ref={listboxRef}
+                  value={value}
+                  onChange={(val) => {
+                    onChange(val);
+                    setValue(`emails.${index}.role_active`, true);
+                    setIsRoleMenuOpen(false);
+                  }}
+                  className="w-full flex-shrink-0 text-left"
                 >
-                  <span
-                    className={`text-13 ${
-                      !getValues(`emails.${index}.role_active`) ? "text-placeholder" : "text-primary"
-                    } sm:text-13`}
-                  >
-                    {ROLE[value]}
-                  </span>
+                  {({ open }) => {
+                    if (isRoleMenuOpen !== open) setIsRoleMenuOpen(open);
+                    return (
+                      <>
+                        <Listbox.Button
+                          type="button"
+                          ref={setReferenceElement}
+                          className="flex w-full items-center justify-between gap-1 rounded-md border-[0.5px] border-strong px-2.5 py-2 text-13"
+                        >
+                          <span
+                            className={`text-13 ${
+                              !getValues(`emails.${index}.role_active`) ? "text-placeholder" : "text-primary"
+                            } sm:text-13`}
+                          >
+                            {ROLE[value]}
+                          </span>
 
-                  <ChevronDownOutline
-                    className={`size-3 ${
-                      !getValues(`emails.${index}.role_active`) ? "text-placeholder" : "text-primary"
-                    }`}
-                  />
-                </Listbox.Button>
+                          <ChevronDownOutline
+                            className={`size-3 ${
+                              !getValues(`emails.${index}.role_active`) ? "text-placeholder" : "text-primary"
+                            }`}
+                          />
+                        </Listbox.Button>
 
-                <Listbox.Options as="div">
-                  <div
-                    className="shadow-sm absolute z-10 mt-1 h-fit w-48 space-y-1 rounded-md border border-strong bg-surface-1 p-2 focus:outline-none sm:w-60"
-                    ref={setPopperElement}
-                    style={styles.popper}
-                    {...attributes.popper}
-                  >
-                    {Object.entries(ROLE_DETAILS).map(([key, value]) => (
-                      <Listbox.Option
-                        as="div"
-                        key={key}
-                        value={parseInt(key)}
-                        className={({ active, selected }) =>
-                          `cursor-pointer truncate rounded-sm px-1 py-1.5 select-none ${
-                            active || selected ? "bg-onboarding-background-400/40" : ""
-                          } ${selected ? "text-primary" : "text-secondary"}`
-                        }
-                      >
-                        {({ selected }) => (
-                          <div className="flex items-center gap-2 p-1 text-wrap">
-                            <div className="flex flex-col">
-                              <div className="text-13 font-medium">{t(value.i18n_title)}</div>
-                              <div className="flex text-11 text-tertiary">{t(value.i18n_description)}</div>
-                            </div>
-                            {selected && <TickOutline className="h-4 w-4 shrink-0" />}
+                        <Listbox.Options as="div">
+                          <div
+                            className="shadow-sm absolute z-10 mt-1 h-fit w-48 space-y-1 rounded-md border border-strong bg-surface-1 p-2 focus:outline-none sm:w-60"
+                            ref={setPopperElement}
+                            style={styles.popper}
+                            {...attributes.popper}
+                            onClickCapture={(e) => {
+                              // React 19 hit-testing sometimes resolves option clicks to
+                              // this panel container instead of the option elements, so
+                              // the click never reaches an option. Resolve the intended
+                              // option by click coordinates and drive onChange directly.
+                              const root = e.currentTarget as HTMLElement;
+                              const items = Array.from(
+                                root.querySelectorAll<HTMLElement>("li, [role='option']")
+                              ).filter((el) => el.getBoundingClientRect().height > 0);
+                              const option = items.find((el) => {
+                                const r = el.getBoundingClientRect();
+                                return (
+                                  e.clientX >= r.left &&
+                                  e.clientX <= r.right &&
+                                  e.clientY >= r.top &&
+                                  e.clientY <= r.bottom
+                                );
+                              });
+                              if (!option) return;
+                              const idx = items.indexOf(option);
+                              const roleEntry = roleOptions[idx];
+                              if (idx >= 0 && roleEntry) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const roleKey = parseInt(roleEntry[0]);
+                                onChange(roleKey);
+                                setValue(`emails.${index}.role_active`, true);
+                                setIsRoleMenuOpen(false);
+                              }
+                            }}
+                          >
+                            {roleOptions.map(([key, value]) => (
+                              <Listbox.Option
+                                as="div"
+                                key={key}
+                                value={parseInt(key)}
+                                className={({ active, selected }) =>
+                                  `cursor-pointer truncate rounded-sm px-1 py-1.5 select-none ${
+                                    active || selected ? "bg-onboarding-background-400/40" : ""
+                                  } ${selected ? "text-primary" : "text-secondary"}`
+                                }
+                              >
+                                {({ selected }) => (
+                                  <div className="flex items-center gap-2 p-1 text-wrap">
+                                    <div className="flex flex-col">
+                                      <div className="text-13 font-medium">{t(value.i18n_title)}</div>
+                                      <div className="flex text-11 text-tertiary">{t(value.i18n_description)}</div>
+                                    </div>
+                                    {selected && <TickOutline className="h-4 w-4 shrink-0" />}
+                                  </div>
+                                )}
+                              </Listbox.Option>
+                            ))}
                           </div>
-                        )}
-                      </Listbox.Option>
-                    ))}
-                  </div>
-                </Listbox.Options>
-              </Listbox>
-            )}
+                        </Listbox.Options>
+                      </>
+                    );
+                  }}
+                </Listbox>
+              );
+            }}
           />
         </div>
         {fields.length > 1 && (

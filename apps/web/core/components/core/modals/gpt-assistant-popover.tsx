@@ -64,6 +64,7 @@ export function GptAssistantPopover(props: Props) {
   // refs
   const editorRef = useRef<EditorRefApi>(null);
   const responseRef = useRef<EditorRefApi>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
   // popper
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: placement ?? "auto",
@@ -144,6 +145,38 @@ export function GptAssistantPopover(props: Props) {
     if (isOpen) setFocus("task");
   }, [isOpen, setFocus]);
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can similarly be dropped,
+  // leaving popperElement null forever: popper never runs and the panel
+  // stays at 0x0. The panel is not portaled (no createPortal call), so it
+  // remains inside this Popover's own subtree — recover it from there.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      if (!dropdownRef.current) return false;
+      const el = dropdownRef.current.querySelector<HTMLDivElement>(".fixed.z-10 > div");
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isOpen, popperElement]);
+
   useEffect(() => {
     editorRef.current?.setEditorValue(prompt || "");
   }, [editorRef, prompt]);
@@ -197,7 +230,7 @@ export function GptAssistantPopover(props: Props) {
       : "Generate again";
 
   return (
-    <Popover as="div" className={`relative w-min text-left`}>
+    <Popover as="div" className={`relative w-min text-left`} ref={dropdownRef}>
       <Popover.Button as={Fragment}>
         <button ref={setReferenceElement} className="flex items-center" tabIndex={-1}>
           {button}

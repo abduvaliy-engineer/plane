@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { Fragment, useState } from "react";
+import React, { Fragment, useEffect, useRef, useState } from "react";
 import type { Placement } from "@popperjs/core";
 import { usePopper } from "react-popper";
 // headless ui
@@ -39,15 +39,54 @@ export function FiltersDropdown(props: Props) {
 
   const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | HTMLDivElement | null>(null);
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
+  // ref to the Popover root, used to recover dropped popper refs on React 19
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  // local open state, synced from Headless UI's render prop below, used to
+  // drive the React 19 ref-recovery effects
+  const [isOpen, setIsOpen] = useState(false);
 
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: placement ?? "auto",
   });
 
+  // On React 19 the trigger button's/div's ref callback can be dropped after
+  // a disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can similarly be dropped,
+  // leaving popperElement null forever: popper never runs and the panel
+  // stays at 0x0. The panel is not portaled (no createPortal call), so it
+  // remains inside this Popover's own subtree — recover it from there.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      if (!dropdownRef.current) return false;
+      const el = dropdownRef.current.querySelector<HTMLDivElement>(".fixed.z-10 > div");
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isOpen, popperElement]);
+
   return (
-    <Popover as="div">
-      {({ open }) => (
-        <>
+    <Popover as="div" ref={dropdownRef}>
+      {({ open }) => {
+        if (isOpen !== open) setIsOpen(open);
+        return (
+          <>
           <Popover.Button as={React.Fragment}>
             {menuButton ? (
               <button type="button" ref={setReferenceElement}>
@@ -111,8 +150,9 @@ export function FiltersDropdown(props: Props) {
               </div>
             </Popover.Panel>
           </Transition>
-        </>
-      )}
+          </>
+        );
+      }}
     </Popover>
   );
 }

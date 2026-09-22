@@ -296,13 +296,7 @@ export const ProjectDropdownBase = observer(function ProjectDropdownBase(props: 
               {filteredOptions ? (
                 filteredOptions.length > 0 ? (
                   filteredOptions.map((option) => {
-                    if (!option) {
-                // The outside-click detector misses these panel clicks (same hit flaw), so close here.
-                e.preventDefault();
-                e.stopPropagation();
-                handleClose();
-                return;
-              }
+                    if (!option) return;
                     return (
                       <Combobox.Option
                         as="li"

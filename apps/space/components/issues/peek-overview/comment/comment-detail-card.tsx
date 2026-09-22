@@ -185,7 +185,25 @@ export const CommentCard = observer(function CommentCard(props: Props) {
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="shadow-lg absolute right-0 z-10 mt-1 max-h-36 min-w-[8rem] origin-top-right overflow-auto overflow-y-scroll rounded-md border border-strong bg-surface-1 p-1 text-11 whitespace-nowrap focus:outline-none">
+            <Menu.Items
+              className="shadow-lg absolute right-0 z-10 mt-1 max-h-36 min-w-[8rem] origin-top-right overflow-auto overflow-y-scroll rounded-md border border-strong bg-surface-1 p-1 text-11 whitespace-nowrap focus:outline-none"
+              onClickCapture={(e) => {
+                // React 19 hit-testing sometimes resolves clicks inside this
+                // panel to the panel container instead of the actual button
+                // under the pointer, so the click never reaches its handler.
+                // Re-dispatch the click onto the real element under the cursor.
+                const root = e.currentTarget as HTMLElement;
+                if (e.target === root) {
+                  const real = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+                  const target = real?.closest("button");
+                  if (target && root.contains(target) && target !== root) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    target.click();
+                  }
+                }
+              }}
+            >
               <Menu.Item>
                 {({ active }) => (
                   <div className="py-1">

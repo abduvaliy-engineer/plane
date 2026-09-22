@@ -6,7 +6,7 @@
 
 import { Combobox } from "@headlessui/react";
 
-import React, { createContext, useCallback, useContext, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePopper } from "react-popper";
 import { useOutsideClickDetector } from "@plane/hooks";
@@ -50,6 +50,44 @@ function CustomSelect(props: ICustomSelectProps) {
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: placement ?? "bottom-start",
   });
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the portaled panel renders at the document's default (0,0) corner
+  // instead of anchored to the trigger button. Recover by locating the open
+  // panel mounted in document.body.
+  useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      let el: HTMLDivElement | null = null;
+      if (referenceElement?.id) {
+        el = document.querySelector<HTMLDivElement>(`ul[aria-labelledby="${referenceElement.id}"] > div`);
+      }
+      if (!el) {
+        el = document.querySelector<HTMLDivElement>('ul[data-headlessui-state="open"] > div, ul[data-open] > div');
+      }
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isOpen, popperElement, referenceElement]);
 
   const openDropdown = useCallback(() => {
     setIsOpen(true);
@@ -136,6 +174,34 @@ function CustomSelect(props: ICustomSelectProps) {
                     "max-h-36": maxHeight === "rg",
                     "max-h-28": maxHeight === "sm",
                   })}
+                  onClickCapture={(e) => {
+                    // React 19 hit-testing sometimes resolves option clicks to this
+                    // list container instead of the option elements, so the click
+                    // never reaches an option. Resolve the intended option by click
+                    // coordinates. CustomSelect.Option accepts arbitrary `children`,
+                    // so there is no index to map back to a value list here -- each
+                    // Option instead stashes its own `value` on its DOM node (see the
+                    // ref callback in `Option` below) and we read it straight off the
+                    // matched element.
+                    const root = e.currentTarget as HTMLElement;
+                    const items = Array.from(root.querySelectorAll<HTMLElement>("li, [role='option']")).filter(
+                      (el) => el.getBoundingClientRect().height > 0
+                    );
+                    const option = items.find((el) => {
+                      const r = el.getBoundingClientRect();
+                      return (
+                        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+                      );
+                    });
+                    if (!option) return;
+                    const hasValue = "__customSelectValue" in option;
+                    if (!hasValue) return;
+                    const value = (option as any).__customSelectValue;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onChange?.(value);
+                    closeDropdown();
+                  }}
                 >
                   {children}
                 </div>
@@ -161,9 +227,22 @@ function Option(props: ICustomSelectItemProps) {
     }, 0);
   }, [closeDropdown]);
 
+  // Stash this option's value directly on its DOM node so the panel's
+  // onClickCapture (see CustomSelect above) can resolve React19 mis-hit
+  // clicks back to the correct option -- CustomSelect.Option renders
+  // arbitrary `children`, so there is no stable index/value list to map
+  // click coordinates back to otherwise.
+  const setOptionRef = useCallback(
+    (node: HTMLLIElement | null) => {
+      if (node) (node as any).__customSelectValue = value;
+    },
+    [value]
+  );
+
   return (
     <Combobox.Option
       as="li"
+      ref={setOptionRef}
       value={value}
       className={({ active }) =>
         cn(

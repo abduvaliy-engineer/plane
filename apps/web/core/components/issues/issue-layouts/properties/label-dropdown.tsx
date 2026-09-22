@@ -137,6 +137,27 @@ export function LabelDropdown(props: ILabelDropdownProps) {
     ],
   });
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs,
+  // the panel stays at 0x0 and every option click registers as an outside
+  // click. Recover by locating the mounted panel from the container DOM.
+  useEffect(() => {
+    if (isOpen && !popperElement && dropdownRef.current) {
+      const el = dropdownRef.current.querySelector<HTMLDivElement>("ul.fixed.z-10 > div");
+      if (el) setPopperElement(el);
+    }
+  }, [isOpen, popperElement]);
+
   const onOpen = useCallback(() => {
     if (!storeLabels && workspaceSlug && projectId)
       fetchProjectLabels(workspaceSlug, projectId)
@@ -257,6 +278,32 @@ export function LabelDropdown(props: ILabelDropdownProps) {
               ref={setPopperElement}
               style={styles.popper}
               {...attributes.popper}
+              onClickCapture={(e) => {
+                // React 19 hit-testing sometimes resolves option clicks to this
+                // panel container instead of the option elements, so the click
+                // never reaches an option. Resolve the intended option by click
+                // coordinates and drive this component's own onChange (this
+                // dropdown is multi-select: toggle the hit value in/out).
+                const root = e.currentTarget as HTMLElement;
+                const items = Array.from(root.querySelectorAll<HTMLElement>("li, [role='option']")).filter(
+                  (el) => el.getBoundingClientRect().height > 0
+                );
+                const option = items.find((el) => {
+                  const r = el.getBoundingClientRect();
+                  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+                });
+                if (!option) return;
+                const idx = items.indexOf(option);
+                const target = filteredOptions?.[idx];
+                if (idx >= 0 && target) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const next = value.includes(target.value)
+                    ? value.filter((v) => v !== target.value)
+                    : [...value, target.value];
+                  onChange(next);
+                }
+              }}
             >
               <div className="flex w-full items-center justify-start rounded-sm border border-subtle bg-surface-2 px-2">
                 <SearchOutline className="h-3.5 w-3.5 text-tertiary" />
