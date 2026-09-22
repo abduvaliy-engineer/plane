@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Placement } from "@popperjs/core";
 import { observer } from "mobx-react";
 import { usePopper } from "react-popper";
@@ -71,10 +71,48 @@ export const WorkItemLabelSelectBase = observer(function WorkItemLabelSelectBase
   const { styles, attributes } = usePopper(referenceElement, popperElement, {
     placement: placement ?? "bottom-start",
   });
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  useEffect(() => {
+    if (isDropdownOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isDropdownOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs,
+  // the panel stays at 0x0 and every option click registers as an outside
+  // click. Recover by locating the mounted panel from the container DOM.
+  useEffect(() => {
+    if (isDropdownOpen && !popperElement && dropdownRef.current) {
+      const el = dropdownRef.current.querySelector<HTMLDivElement>("ul.fixed.z-10 > div");
+      if (el) setPopperElement(el);
+    }
+  }, [isDropdownOpen, popperElement]);
+
   // derived values
   const labelsList = labelIds.map((labelId) => getLabelById(labelId)).filter((label) => !!label);
   const filteredOptions =
     query === "" ? labelsList : labelsList?.filter((l) => l.name.toLowerCase().includes(query.toLowerCase()));
+
+  // Flat list of option values in the exact DOM order the panel renders them
+  // (parentless labels, then each group's children) so a click-coordinate
+  // hit can be mapped back to the right value by index.
+  const flatOptionValues = useMemo(() => {
+    const flat: string[] = [];
+    filteredOptions.forEach((label) => {
+      const children = labelsList?.filter((l) => l.parent === label.id);
+      if (children.length === 0) {
+        if (!label.parent) flat.push(label.id);
+      } else {
+        children.forEach((child) => flat.push(child.id));
+      }
+    });
+    return flat;
+  }, [filteredOptions, labelsList]);
 
   const onOpen = () => {
     if (referenceElement) referenceElement.focus();
@@ -196,6 +234,32 @@ export const WorkItemLabelSelectBase = observer(function WorkItemLabelSelectBase
             ref={setPopperElement}
             style={styles.popper}
             {...attributes.popper}
+            onClickCapture={(e) => {
+              // React 19 hit-testing sometimes resolves option clicks to this
+              // panel container instead of the option elements, so the click
+              // never reaches an option. Resolve the intended option by click
+              // coordinates and drive this component's own onChange. Only
+              // "li"s with role="option" are real selectable options here —
+              // group-header "li"s and the "+ Add label" prompt must keep
+              // their own click handling.
+              const root = e.currentTarget as HTMLElement;
+              const items = Array.from(root.querySelectorAll<HTMLElement>("[role='option']")).filter(
+                (el) => el.getBoundingClientRect().height > 0
+              );
+              const option = items.find((el) => {
+                const r = el.getBoundingClientRect();
+                return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+              });
+              if (!option) return;
+              const idx = items.indexOf(option);
+              const val = flatOptionValues[idx];
+              if (idx >= 0 && val !== undefined) {
+                e.preventDefault();
+                e.stopPropagation();
+                const next = value.includes(val) ? value.filter((v) => v !== val) : [...value, val];
+                dropdownOnChange(next);
+              }
+            }}
           >
             <div className="flex items-center gap-1.5 rounded-sm border border-subtle bg-surface-2 px-2">
               <SearchOutline className="h-3.5 w-3.5 text-placeholder" />

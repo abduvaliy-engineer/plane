@@ -28,6 +28,7 @@ export function DropdownOptions(props: IMultiSelectDropdownOptions | ISingleSele
     keyExtractor,
     options,
     handleClose,
+    onOptionClick,
     renderItem,
     loader,
     isMobile = false,
@@ -46,7 +47,35 @@ export function DropdownOptions(props: IMultiSelectDropdownOptions | ISingleSele
           isMobile={isMobile}
         />
       )}
-      <div className={cn("max-h-48 overflow-y-scroll", !disableSearch && "mt-2")}>
+      <div
+        className={cn("max-h-48 overflow-y-scroll", !disableSearch && "mt-2")}
+        onClickCapture={(e) => {
+          // React 19 hit-testing sometimes resolves option clicks to this
+          // options list container instead of the option `li` elements, so
+          // the click never reaches an option. Resolve the intended option
+          // by click coordinates and drive selection directly. This div is
+          // separate from the search-input area above, so we never
+          // intercept clicks meant for the input.
+          if (!options) return;
+          const root = e.currentTarget as HTMLElement;
+          const items = Array.from(root.querySelectorAll<HTMLElement>("li, [role='option']")).filter(
+            (el) => el.getBoundingClientRect().height > 0
+          );
+          const option = items.find((el) => {
+            const r = el.getBoundingClientRect();
+            return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+          });
+          if (!option) return;
+          const idx = items.indexOf(option);
+          const target = options[idx];
+          if (idx >= 0 && target && !target.disabled) {
+            e.preventDefault();
+            e.stopPropagation();
+            onOptionClick?.(keyExtractor(target));
+            handleClose?.();
+          }
+        }}
+      >
         <>
           {options ? (
             options.length > 0 ? (

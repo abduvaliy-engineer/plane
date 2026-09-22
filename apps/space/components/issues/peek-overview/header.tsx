@@ -101,7 +101,30 @@ export const PeekOverviewHeader = observer(function PeekOverviewHeader(props: Pr
                 as="ul"
                 className="shadow-lg absolute left-0 z-10 mt-1 min-w-[12rem] origin-top-left overflow-y-auto rounded-md border border-strong bg-surface-2 text-11 whitespace-nowrap focus:outline-none"
               >
-                <div className="space-y-1 p-2">
+                <div
+                  className="space-y-1 p-2"
+                  onClickCapture={(e) => {
+                    // React 19 hit-testing sometimes resolves option clicks to
+                    // this container instead of the actual li elements, so the
+                    // click never reaches an option. Resolve the intended
+                    // option by click coordinates and drive setPeekMode directly.
+                    const root = e.currentTarget as HTMLElement;
+                    const items = Array.from(root.querySelectorAll<HTMLElement>("li, [role='option']")).filter(
+                      (el) => el.getBoundingClientRect().height > 0
+                    );
+                    const option = items.find((el) => {
+                      const r = el.getBoundingClientRect();
+                      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+                    });
+                    if (!option) return;
+                    const idx = items.indexOf(option);
+                    if (idx >= 0 && PEEK_MODES[idx]) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setPeekMode(PEEK_MODES[idx].key);
+                    }
+                  }}
+                >
                   {PEEK_MODES.map((mode) => (
                     <Listbox.Option
                       as="li"

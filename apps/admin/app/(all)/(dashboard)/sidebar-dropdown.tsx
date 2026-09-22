@@ -44,6 +44,22 @@ export const AdminSidebarDropdown = observer(function AdminSidebarDropdown() {
           "left-4": isSidebarCollapsed,
         }
       )}
+      onClickCapture={(e) => {
+        // React 19 hit-testing sometimes resolves clicks inside this panel
+        // to the panel container instead of the actual button under the
+        // pointer, so the click never reaches its handler. Re-dispatch the
+        // click onto the real element under the cursor.
+        const root = e.currentTarget as HTMLElement;
+        if (e.target === root) {
+          const real = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+          const target = real?.closest("button");
+          if (target && root.contains(target) && target !== root) {
+            e.preventDefault();
+            e.stopPropagation();
+            target.click();
+          }
+        }
+      }}
     >
       <div className="flex flex-col gap-2.5 pb-2">
         <span className="truncate px-2 text-secondary">{currentUser?.email}</span>

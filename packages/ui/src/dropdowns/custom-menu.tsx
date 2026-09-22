@@ -96,6 +96,45 @@ function CustomMenu(props: ICustomMenuDropdownProps) {
     placement: placement ?? "auto",
   });
 
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from the container DOM.
+  React.useEffect(() => {
+    if (isOpen && !referenceElement && dropdownRef.current) {
+      const btn = dropdownRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the panel (which may be portaled via `portalElement`) renders at the
+  // document's default (0,0) corner instead of anchored to the trigger
+  // button. Recover by locating the mounted panel, scoped to this menu's own
+  // container first (non-portaled case), falling back to a document-wide
+  // lookup for the distinctive "fixed z-30 translate-y-0" wrapper class this
+  // menu's Menu.Items always renders with (portaled case).
+  React.useEffect(() => {
+    if (popperElement) return;
+    const find = () => {
+      let el: HTMLDivElement | null =
+        dropdownRef.current?.querySelector<HTMLDivElement>(".fixed.z-30.translate-y-0 > div") ?? null;
+      if (!el) {
+        el = document.querySelector<HTMLDivElement>(".fixed.z-30.translate-y-0 > div");
+      }
+      if (el) setPopperElement(el);
+      return !!el;
+    };
+    if (isOpen && !find()) {
+      const t1 = setTimeout(find, 50);
+      const t2 = setTimeout(find, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isOpen, popperElement]);
+
   const closeAllSubmenus = React.useCallback(() => {
     submenuClosersRef.current.forEach((closeSubmenu) => closeSubmenu());
   }, []);
@@ -327,6 +366,10 @@ function SubMenu(props: ICustomSubMenuProps) {
   const [referenceElement, setReferenceElement] = React.useState<HTMLSpanElement | null>(null);
   const [popperElement, setPopperElement] = React.useState<HTMLDivElement | null>(null);
   const submenuRef = React.useRef<HTMLDivElement | null>(null);
+  // Unique per-instance marker so the popperElement recovery below (which
+  // must search document.body, since the panel is portaled) can find only
+  // this submenu's own panel and not a sibling submenu's.
+  const submenuInstanceId = React.useId();
 
   const menuContext = React.useContext(MenuContext);
 
@@ -358,6 +401,39 @@ function SubMenu(props: ICustomSubMenuProps) {
   const closeSubmenu = React.useCallback(() => {
     setIsOpen(false);
   }, []);
+
+  // On React 19 the trigger span's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger span from this submenu's own container.
+  React.useEffect(() => {
+    if (isOpen && !referenceElement && submenuRef.current) {
+      const span = submenuRef.current.querySelector<HTMLSpanElement>(":scope > span");
+      if (span) setReferenceElement(span);
+    }
+  }, [isOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the portaled panel renders at the document's default (0,0) corner
+  // instead of anchored to the trigger. Recover by locating this submenu's
+  // own panel in document.body via its unique instance marker.
+  React.useEffect(() => {
+    if (isOpen && !popperElement) {
+      const find = () => {
+        const el = document.querySelector<HTMLDivElement>(`[data-submenu-instance="${submenuInstanceId}"]`);
+        if (el) setPopperElement(el);
+        return !!el;
+      };
+      if (!find()) {
+        const t1 = setTimeout(find, 50);
+        const t2 = setTimeout(find, 300);
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+        };
+      }
+    }
+  }, [isOpen, popperElement, submenuInstanceId]);
 
   // Register this submenu with the main menu context
   React.useEffect(() => {
@@ -436,6 +512,7 @@ function SubMenu(props: ICustomSubMenuProps) {
               contentClassName
             )}
             data-prevent-outside-click="true"
+            data-submenu-instance={submenuInstanceId}
             onMouseEnter={() => {
               // Notify parent menu that we're hovering over submenu
               const mainMenuElement = document.querySelector('[data-main-menu="true"]');

@@ -29,6 +29,11 @@ export function ContextMenuItem(props: ContextMenuItemProps) {
   const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
   const [activeNestedIndex, setActiveNestedIndex] = useState<number>(0);
   const nestedMenuRef = useRef<HTMLDivElement | null>(null);
+  const itemRootRef = useRef<HTMLDivElement | null>(null);
+  // Unique per-instance marker so the popperElement recovery below (which
+  // must search document.body, since the nested panel is portaled) can find
+  // only this item's own nested panel and not a sibling's.
+  const nestedInstanceId = React.useId();
 
   const contextMenuContext = useContext(ContextMenuContext);
   const hasNestedItems = item.nestedMenuItems && item.nestedMenuItems.length > 0;
@@ -63,6 +68,39 @@ export function ContextMenuItem(props: ContextMenuItemProps) {
     setIsNestedOpen(false);
     setActiveNestedIndex(0);
   }, []);
+
+  // On React 19 the trigger button's ref callback can be dropped after a
+  // disrupted render, leaving referenceElement null and the popper dead.
+  // Recover by locating the trigger button from this item's own container.
+  React.useEffect(() => {
+    if (isNestedOpen && !referenceElement && itemRootRef.current) {
+      const btn = itemRootRef.current.querySelector<HTMLButtonElement>("button");
+      if (btn) setReferenceElement(btn);
+    }
+  }, [isNestedOpen, referenceElement]);
+
+  // On React 19 the panel div's ref callback can be dropped after a
+  // disrupted render, leaving popperElement null forever: popper never runs
+  // and the portaled panel renders at the document's default (0,0) corner
+  // instead of anchored to the trigger. Recover by locating this item's own
+  // nested panel in document.body via its unique instance marker.
+  React.useEffect(() => {
+    if (isNestedOpen && !popperElement) {
+      const find = () => {
+        const el = document.querySelector<HTMLDivElement>(`[data-nested-instance="${nestedInstanceId}"]`);
+        if (el) setPopperElement(el);
+        return !!el;
+      };
+      if (!find()) {
+        const t1 = setTimeout(find, 50);
+        const t2 = setTimeout(find, 300);
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+        };
+      }
+    }
+  }, [isNestedOpen, popperElement, nestedInstanceId]);
 
   // Register this nested menu with the main context
   React.useEffect(() => {
@@ -153,7 +191,7 @@ export function ContextMenuItem(props: ContextMenuItemProps) {
   if (item.shouldRender === false) return null;
 
   return (
-    <>
+    <div ref={itemRootRef}>
       <button
         ref={setReferenceElement}
         type="button"
@@ -198,6 +236,7 @@ export function ContextMenuItem(props: ContextMenuItemProps) {
             {...attributes.popper}
             className="fixed z-[35] min-w-[12rem] overflow-hidden rounded-md border-[0.5px] border-subtle-1 bg-surface-1 px-2 py-2.5 text-11"
             data-context-submenu="true"
+            data-nested-instance={nestedInstanceId}
           >
             <div ref={nestedMenuRef} className="vertical-scrollbar scrollbar-sm max-h-72 overflow-y-scroll">
               {renderedNestedItems.map((nestedItem, index) => (
@@ -244,6 +283,6 @@ export function ContextMenuItem(props: ContextMenuItemProps) {
           </div>
         </Portal>
       )}
-    </>
+    </div>
   );
 }
