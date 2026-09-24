@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import type {
   Control,
@@ -16,9 +16,7 @@ import type {
 } from "react-hook-form";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 // icons
-import { usePopper } from "react-popper";
-import { AddOutline, ChevronDownOutline, CloseCircleOutline, TickOutline } from "@makeplane/propel/icons";
-import { Listbox } from "@headlessui/react";
+import { AddOutline, CloseCircleOutline } from "@makeplane/propel/icons";
 // plane imports
 import { Field } from "@makeplane/propel/components/field";
 import { Input, InputGroup } from "@makeplane/propel/components/input";
@@ -26,11 +24,14 @@ import type { EUserPermissions } from "@plane/constants";
 import { ROLE, ROLE_DETAILS } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 // types
-import { Button } from "@plane/propel/button";
-import { TOAST_TYPE, setToast } from "@plane/propel/toast";
+import { Button } from "@makeplane/propel/components/button";
+import { Button as ButtonElement } from "@makeplane/propel/elements/button";
+import { setToast } from "@plane/blocks/toast";
 import type { IUser, IWorkspace } from "@plane/types";
 // ui
-import { Spinner } from "@plane/ui";
+import { Select, SelectDropdownPlacementContext } from "@plane/blocks/select";
+import { Spinner } from "@plane/blocks/spinner";
+import { cn } from "@plane/utils";
 // services
 import { WorkspaceService } from "@/services/workspace.service";
 // components
@@ -67,8 +68,17 @@ type InviteMemberFormProps = {
   setIsInvitationDisabled: (value: boolean) => void;
 };
 
+type TRoleOption = { key: EUserPermissions; i18n_title: string; i18n_description: string };
+
 // services
 const workspaceService = new WorkspaceService();
+const roleOptions: TRoleOption[] = Object.entries(ROLE_DETAILS).map(([key, details]) => ({
+  key: parseInt(key) as EUserPermissions,
+  i18n_title: details.i18n_title,
+  i18n_description: details.i18n_description,
+}));
+// legacy role picker opened at bottom-end (right-column trigger), so align the panel to its end edge
+const ROLE_SELECT_PLACEMENT = { side: "bottom", align: "end" } as const;
 const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 
 const placeholderEmails = [
@@ -97,12 +107,6 @@ const InviteMemberInput = observer(function InviteMemberInput(props: InviteMembe
     watch,
   } = props;
 
-  const [referenceElement, setReferenceElement] = useState<HTMLButtonElement | null>(null);
-  const [popperElement, setPopperElement] = useState<HTMLDivElement | null>(null);
-  // ref to the Listbox root, used to recover dropped popper refs on React 19
-  const listboxRef = useRef<HTMLDivElement | null>(null);
-  const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
-
   const { t } = useTranslation();
 
   const email = watch(`emails.${index}.email`);
@@ -130,50 +134,6 @@ const InviteMemberInput = observer(function InviteMemberInput(props: InviteMembe
       }
     }
   };
-
-  const { styles, attributes } = usePopper(referenceElement, popperElement, {
-    placement: "bottom-end",
-    modifiers: [
-      {
-        name: "preventOverflow",
-        options: {
-          padding: 12,
-        },
-      },
-    ],
-  });
-
-  // On React 19 the trigger button's ref callback can be dropped after a
-  // disrupted render, leaving referenceElement null and the popper dead.
-  // Recover by locating the trigger button from the container DOM.
-  useEffect(() => {
-    if (isRoleMenuOpen && !referenceElement && listboxRef.current) {
-      const btn = listboxRef.current.querySelector<HTMLButtonElement>("button");
-      if (btn) setReferenceElement(btn);
-    }
-  }, [isRoleMenuOpen, referenceElement]);
-
-  // On React 19 the panel div's ref callback can similarly be dropped,
-  // leaving popperElement null forever: popper never runs and the panel
-  // stays at 0x0. The panel is not portaled (no createPortal call), so it
-  // remains inside this Listbox's own subtree — recover it from there.
-  useEffect(() => {
-    if (popperElement) return;
-    const find = () => {
-      if (!listboxRef.current) return false;
-      const el = listboxRef.current.querySelector<HTMLDivElement>('[role="listbox"] > div');
-      if (el) setPopperElement(el);
-      return !!el;
-    };
-    if (isRoleMenuOpen && !find()) {
-      const t1 = setTimeout(find, 50);
-      const t2 = setTimeout(find, 300);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-      };
-    }
-  }, [isRoleMenuOpen, popperElement]);
 
   return (
     <div>
@@ -215,111 +175,34 @@ const InviteMemberInput = observer(function InviteMemberInput(props: InviteMembe
             control={control}
             name={`emails.${index}.role`}
             rules={{ required: true }}
-            render={({ field: { value, onChange } }) => {
-              const roleOptions = Object.entries(ROLE_DETAILS);
-              return (
-                <Listbox
-                  as="div"
-                  ref={listboxRef}
-                  value={value}
+            render={({ field: { value, onChange } }) => (
+              <SelectDropdownPlacementContext.Provider value={ROLE_SELECT_PLACEMENT}>
+                <Select<TRoleOption>
+                  value={roleOptions.find((role) => role.key === value) ?? null}
                   onChange={(val) => {
-                    onChange(val);
+                    onChange(Number(val) as EUserPermissions);
                     setValue(`emails.${index}.role_active`, true);
-                    setIsRoleMenuOpen(false);
                   }}
-                  className="w-full flex-shrink-0 text-left"
+                  getValues={() => roleOptions}
+                  getOptionValue={(role) => String(role.key)}
+                  getOptionLabel={(role) => t(role.i18n_title)}
+                  getOptionDescription={(role) => t(role.i18n_description)}
+                  showSearch={false}
+                  pinSelected={false}
                 >
-                  {({ open }) => {
-                    if (isRoleMenuOpen !== open) setIsRoleMenuOpen(open);
-                    return (
-                      <>
-                        <Listbox.Button
-                          type="button"
-                          ref={setReferenceElement}
-                          className="flex w-full items-center justify-between gap-1 rounded-md border-[0.5px] border-strong px-2.5 py-2 text-13"
-                        >
-                          <span
-                            className={`text-13 ${
-                              !getValues(`emails.${index}.role_active`) ? "text-placeholder" : "text-primary"
-                            } sm:text-13`}
-                          >
-                            {ROLE[value]}
-                          </span>
-
-                          <ChevronDownOutline
-                            className={`size-3 ${
-                              !getValues(`emails.${index}.role_active`) ? "text-placeholder" : "text-primary"
-                            }`}
-                          />
-                        </Listbox.Button>
-
-                        <Listbox.Options as="div">
-                          <div
-                            className="shadow-sm absolute z-10 mt-1 h-fit w-48 space-y-1 rounded-md border border-strong bg-surface-1 p-2 focus:outline-none sm:w-60"
-                            ref={setPopperElement}
-                            style={styles.popper}
-                            {...attributes.popper}
-                            onClickCapture={(e) => {
-                              // React 19 hit-testing sometimes resolves option clicks to
-                              // this panel container instead of the option elements, so
-                              // the click never reaches an option. Resolve the intended
-                              // option by click coordinates and drive onChange directly.
-                              const root = e.currentTarget as HTMLElement;
-                              const items = Array.from(
-                                root.querySelectorAll<HTMLElement>("li, [role='option']")
-                              ).filter((el) => el.getBoundingClientRect().height > 0);
-                              const option = items.find((el) => {
-                                const r = el.getBoundingClientRect();
-                                return (
-                                  e.clientX >= r.left &&
-                                  e.clientX <= r.right &&
-                                  e.clientY >= r.top &&
-                                  e.clientY <= r.bottom
-                                );
-                              });
-                              if (!option) return;
-                              const idx = items.indexOf(option);
-                              const roleEntry = roleOptions[idx];
-                              if (idx >= 0 && roleEntry) {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                const roleKey = parseInt(roleEntry[0]);
-                                onChange(roleKey);
-                                setValue(`emails.${index}.role_active`, true);
-                                setIsRoleMenuOpen(false);
-                              }
-                            }}
-                          >
-                            {roleOptions.map(([key, value]) => (
-                              <Listbox.Option
-                                as="div"
-                                key={key}
-                                value={parseInt(key)}
-                                className={({ active, selected }) =>
-                                  `cursor-pointer truncate rounded-sm px-1 py-1.5 select-none ${
-                                    active || selected ? "bg-onboarding-background-400/40" : ""
-                                  } ${selected ? "text-primary" : "text-secondary"}`
-                                }
-                              >
-                                {({ selected }) => (
-                                  <div className="flex items-center gap-2 p-1 text-wrap">
-                                    <div className="flex flex-col">
-                                      <div className="text-13 font-medium">{t(value.i18n_title)}</div>
-                                      <div className="flex text-11 text-tertiary">{t(value.i18n_description)}</div>
-                                    </div>
-                                    {selected && <TickOutline className="h-4 w-4 shrink-0" />}
-                                  </div>
-                                )}
-                              </Listbox.Option>
-                            ))}
-                          </div>
-                        </Listbox.Options>
-                      </>
-                    );
-                  }}
-                </Listbox>
-              );
-            }}
+                  <Select.Trigger<TRoleOption> variant="select-2xl">
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate text-left text-13",
+                        getValues(`emails.${index}.role_active`) ? "text-primary" : "text-placeholder"
+                      )}
+                    >
+                      {ROLE[value]}
+                    </span>
+                  </Select.Trigger>
+                </Select>
+              </SelectDropdownPlacementContext.Provider>
+            )}
           />
         </div>
         {fields.length > 1 && (
@@ -380,7 +263,7 @@ export function InviteMembers(props: Props) {
       })
       .then(async () => {
         setToast({
-          type: TOAST_TYPE.SUCCESS,
+          type: "success",
           title: "Success!",
           message: "Invitations sent successfully.",
         });
@@ -388,7 +271,7 @@ export function InviteMembers(props: Props) {
       })
       .catch((err) => {
         setToast({
-          type: TOAST_TYPE.ERROR,
+          type: "error",
           title: "Error!",
           message: err?.error,
         });
@@ -464,18 +347,16 @@ export function InviteMembers(props: Props) {
               </button>
             </div>
             <div className="mx-auto flex w-full max-w-96 flex-col items-center justify-center gap-4 px-8 sm:px-2">
-              <Button
+              <ButtonElement
                 variant="primary"
                 type="submit"
-                size="xl"
-                className="w-full"
+                size="lg"
+                stretch="full"
                 disabled={isInvitationDisabled || !isValid || isSubmitting}
               >
                 {isSubmitting ? <Spinner height="20px" width="20px" /> : "Continue"}
-              </Button>
-              <Button variant="ghost" size="xl" className="w-full" onClick={nextStep}>
-                I’ll do it later
-              </Button>
+              </ButtonElement>
+              <Button variant="ghost" size="lg" stretch="full" onClick={nextStep} label="I’ll do it later" />
             </div>
           </form>
         </div>
