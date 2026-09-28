@@ -1,0 +1,4 @@
+services:
+  plane-minio:
+    image: cgr.dev/chainguard/minio:latest
+    user: "0"
